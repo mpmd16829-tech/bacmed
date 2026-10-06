@@ -16,3 +16,10 @@ node_modules
 .neon
 
 .vercel
+
+.deploy-hook.tmp
+.vercel-actions-token.tmp
+scripts/check-token.cjs
+scripts/save-token.cjs
+scripts/create-hook.cjs
+scripts/list-namespaces.cjs
