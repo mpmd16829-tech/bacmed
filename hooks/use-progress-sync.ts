@@ -41,6 +41,8 @@ export function useProgressSync(
 ) {
   // Serialize the payload so the effect only fires on real content changes.
   const serialized = data ? JSON.stringify(data) : ''
+  // Un-onboarded visitors (a landing on the home page, a bounced visit) must not create a row.
+  const onboarded = Boolean(data?.profile?.onboarded)
   const inFlight = useRef(false)
   const lastSent = useRef('')
   const attempted = useRef(false)
@@ -87,7 +89,7 @@ export function useProgressSync(
   // Debounced push: every change schedules one request, and a change that arrives while a request
   // is in flight is still sent when the debounce fires (no lost update, no request per click).
   useEffect(() => {
-    if (!ready || !online || !restored) return
+    if (!ready || !online || !restored || !onboarded) return
     if (!serialized || serialized === lastSent.current) return
     const timer = setTimeout(() => {
       if (inFlight.current || serialized === lastSent.current) return
@@ -113,7 +115,7 @@ export function useProgressSync(
         })
     }, 700)
     return () => clearTimeout(timer)
-  }, [ready, online, restored, serialized])
+  }, [ready, online, restored, onboarded, serialized])
 
   useEffect(() => {
     if (ready && !online) setStatus('offline')
