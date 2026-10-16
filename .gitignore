@@ -4,22 +4,25 @@ __v0_devtools.tsx
 __v0_jsx-dev-runtime.ts
 .snowflake/
 .v0-trash/
+
+# Environment variables and local credentials (jamais commités)
+.env*
+!.env.example
+.neon
 .vercel/
 
-# Environment variables
-.env*.local
+# Scripts locaux qui manipulent des tokens
+scripts/check-token.cjs
+scripts/save-token.cjs
+scripts/push-token-secret.cjs
+scripts/create-hook.cjs
+scripts/list-namespaces.cjs
+.deploy-hook.tmp
+.vercel-actions-token.tmp
+.zwork/
 
 # Common ignores
 node_modules
 .next/
 .DS_Store
-.neon
-
-.vercel
-
-.deploy-hook.tmp
-.vercel-actions-token.tmp
-scripts/check-token.cjs
-scripts/save-token.cjs
-scripts/create-hook.cjs
-scripts/list-namespaces.cjs
+*.log
