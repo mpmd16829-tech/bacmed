@@ -1,5 +1,5 @@
 'use client'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle,
   ArrowLeft,
@@ -26,10 +26,13 @@ import {
 import { streams, practicalGuide, officialResources, sourceNote, type Chapter, type StreamId, type Subject } from '@/lib/bac-data'
 import { pick, ui, type Locale } from '@/lib/i18n'
 import { generatePlan, todayDay, dayLabel, type StudySession } from '@/lib/planner'
-import { coachReply, quickPrompts } from '@/lib/coach'
+import { coachReply, quickPrompts, type CoachTip } from '@/lib/coach'
+import { useContent } from '@/hooks/use-content'
 import { esc, printDocument } from '@/lib/print'
 import { usePersistedState } from '@/hooks/use-persisted-state'
 import { useProgressSync, type RestoredData } from '@/hooks/use-progress-sync'
+import { AdminConsole } from '@/components/admin-console'
+import { StudentCode } from '@/components/student-code'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -51,6 +54,7 @@ type AppData = {
   attempts: Record<string, Attempt>
   streak: number
   lastStudy: string
+  studentCode: string
 }
 
 const initial: AppData = {
@@ -62,6 +66,7 @@ const initial: AppData = {
   attempts: {},
   streak: 0,
   lastStudy: '',
+  studentCode: '',
 }
 
 const icons = { home: House, courses: Library, plan: CalendarDays, progress: Trophy, coach: MessageCircle, resources: ExternalLink }
@@ -84,13 +89,16 @@ const today = () => new Date().toISOString().slice(0, 10)
 export function BacPrepApp() {
   const [data, setData, ready] = usePersistedState<AppData>('prepabac-data-v2', initial)
   const [tab, setTab] = useState<Tab>('home')
+  const [consoleOpen, setConsoleOpen] = useState(false)
   const [online, setOnline] = useState(true)
   const locale = data.locale || 'fr'
   const t = ui[locale]
   const stream = streams.find((s) => s.id === data.profile.stream) ?? streams[1]
+  // Filles et chapitres viennent de la base (via la console), le repli reste le catalogue embarqué.
+  const content = useContent(data.profile.stream, online)
   const subjects = useMemo(
-    () => stream.subjects.filter((s) => !data.profile.subjects.length || data.profile.subjects.includes(s.id)),
-    [stream, data.profile.subjects],
+    () => content.subjects.filter((s) => !data.profile.subjects.length || data.profile.subjects.includes(s.id)),
+    [content.subjects, data.profile.subjects],
   )
   const plan = useMemo(
     () => generatePlan(subjects, data.profile.minutes, data.completedSessions, locale),
@@ -136,6 +144,7 @@ export function BacPrepApp() {
           attempts: { ...restored.attempts, ...d.attempts },
           streak: Math.max(d.streak, restored.streak || 0),
           lastStudy: d.lastStudy || restored.lastStudy || '',
+          studentCode: d.studentCode || restored.studentCode || '',
         }
       })
     },
@@ -152,6 +161,7 @@ export function BacPrepApp() {
           attempts: data.attempts,
           streak: data.streak,
           lastStudy: data.lastStudy,
+          studentCode: data.studentCode ?? '',
         }
       : null,
     ready,
@@ -174,7 +184,7 @@ export function BacPrepApp() {
     )
   }
 
-  if (!data.profile.onboarded) return <Onboarding data={data} setData={setData} lang={lang} />
+  if (!data.profile.onboarded) return <Onboarding data={data} setData={setData} lang={lang} online={online} />
 
   const studied = (patch: Partial<AppData>) => {
     const day = today()
@@ -202,7 +212,7 @@ export function BacPrepApp() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <aside className="fixed inset-y-0 start-0 hidden w-64 flex-col border-e bg-card px-5 py-6 lg:flex">
-        <Brand />
+        <Brand onUnlock={() => setConsoleOpen(true)} />
         <nav className="mt-10 flex flex-col gap-2">
           {nav.map((n) => (
             <Nav key={n.id} {...n} active={tab === n.id} click={() => setTab(n.id)} />
@@ -219,7 +229,7 @@ export function BacPrepApp() {
         <header className="sticky top-0 z-20 border-b bg-background/95 px-4 py-3 backdrop-blur">
           <div className="mx-auto flex max-w-6xl items-center justify-between gap-2">
             <div className="lg:hidden">
-              <Brand />
+              <Brand onUnlock={() => setConsoleOpen(true)} />
             </div>
             <div className="hidden font-semibold lg:block">{pick(stream.name, locale)}</div>
             <div className="flex items-center gap-2">
@@ -255,13 +265,16 @@ export function BacPrepApp() {
               locale={locale}
               value={value}
               mastered={mastered.size}
+              online={online}
+              onCode={(studentCode) => setData((d) => ({ ...d, studentCode }))}
+              onMerged={applyRestore}
               onReset={() => {
                 if (!confirm(t.resetConfirm)) return
                 setData((d) => ({ ...d, completedChapters: [], completedExercises: [], completedSessions: [], attempts: {}, streak: 0, lastStudy: '' }))
               }}
             />
           )}
-          {tab === 'coach' && <Coach locale={locale} />}
+          {tab === 'coach' && <Coach locale={locale} tips={content.coach} />}
           {tab === 'resources' && <Resources locale={locale} />}
         </main>
       </div>
@@ -281,6 +294,12 @@ export function BacPrepApp() {
           )
         })}
       </nav>
+
+      {consoleOpen && (
+        <div className="fixed inset-0 z-50 overflow-auto bg-background">
+          <AdminConsole onClose={() => setConsoleOpen(false)} initialLocale={data.locale} />
+        </div>
+      )}
     </div>
   )
 }
@@ -326,9 +345,20 @@ function SyncBadge({ online, status, t }: { online: boolean; status: string; t: 
   )
 }
 
-function Brand() {
+function Brand({ onUnlock }: { onUnlock?: () => void }) {
+  // Cinq clics sur le logo, dans un souffle de 2,5 s, ouvrent la console. Un élève qui navigue ne la déclenche jamais.
+  const taps = useRef({ count: 0, at: 0 })
+  const click = () => {
+    if (!onUnlock) return
+    const now = Date.now()
+    taps.current = { count: now - taps.current.at < 2500 ? taps.current.count + 1 : 1, at: now }
+    if (taps.current.count >= 5) {
+      taps.current.count = 0
+      onUnlock()
+    }
+  }
   return (
-    <div className="flex items-center gap-3">
+    <button type="button" onClick={click} className="flex items-center gap-3 text-start" aria-label="PrépaBAC">
       <span className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">
         <GraduationCap className="size-5" />
       </span>
@@ -336,7 +366,7 @@ function Brand() {
         <p className="font-serif text-lg font-bold">PrépaBAC</p>
         <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Mauritanie</p>
       </div>
-    </div>
+    </button>
   )
 }
 
@@ -349,12 +379,14 @@ function Nav({ label, icon: I, active, click }: { label: string; icon: typeof Ho
   )
 }
 
-function Onboarding({ data, setData, lang }: { data: AppData; setData: React.Dispatch<React.SetStateAction<AppData>>; lang: React.ReactNode }) {
+function Onboarding({ data, setData, lang, online }: { data: AppData; setData: React.Dispatch<React.SetStateAction<AppData>>; lang: React.ReactNode; online: boolean }) {
   const l = data.locale || 'fr'
   const t = ui[l]
   const [step, setStep] = useState(0)
   const [p, setP] = useState<Profile>(data.profile)
   const stream = streams.find((s) => s.id === p.stream) ?? streams[1]
+  // Les matières proposées à l'inscription sont celles que la console a publiées pour cette filière.
+  const catalogueSubjects = useContent(p.stream, online).subjects
   return (
     <main className="min-h-screen px-4 py-6">
       <div className="mx-auto max-w-5xl">
@@ -390,7 +422,7 @@ function Onboarding({ data, setData, lang }: { data: AppData; setData: React.Dis
               )}
               {step === 1 && (
                 <div className="grid gap-3 sm:grid-cols-2">
-                  {stream.subjects.map((s) => (
+                  {catalogueSubjects.map((s) => (
                     <button
                       key={s.id}
                       onClick={() => setP({ ...p, subjects: p.subjects.includes(s.id) ? p.subjects.filter((x) => x !== s.id) : [...p.subjects, s.id] })}
@@ -444,7 +476,7 @@ function Onboarding({ data, setData, lang }: { data: AppData; setData: React.Dis
                   onClick={() =>
                     setData({
                       ...data,
-                      profile: { ...p, onboarded: true, subjects: p.subjects.length ? p.subjects : stream.subjects.map((s) => s.id) },
+                      profile: { ...p, onboarded: true, subjects: p.subjects.length ? p.subjects : catalogueSubjects.map((s) => s.id) },
                     })
                   }
                 >
@@ -903,6 +935,9 @@ function ProgressView({
   locale,
   value,
   mastered,
+  online,
+  onCode,
+  onMerged,
   onReset,
 }: {
   data: AppData
@@ -910,12 +945,16 @@ function ProgressView({
   locale: Locale
   value: number
   mastered: number
+  online: boolean
+  onCode: (code: string) => void
+  onMerged: (restored: RestoredData) => void
   onReset: () => void
 }) {
   const t = ui[locale]
   return (
     <div className="flex flex-col gap-6">
       <h1 className="font-serif text-4xl font-bold">{t.progress}</h1>
+      <StudentCode locale={locale} code={data.studentCode ?? ''} online={online} onboarded={data.profile.onboarded} onCode={onCode} onMerged={onMerged} />
       <Card>
         <CardHeader>
           <CardDescription>
@@ -956,13 +995,13 @@ function ProgressView({
   )
 }
 
-function Coach({ locale }: { locale: Locale }) {
+function Coach({ locale, tips = [] }: { locale: Locale; tips?: CoachTip[] }) {
   const t = ui[locale]
   const [messages, setMessages] = useState<{ text: string; mine: boolean }[]>([])
   const [input, setInput] = useState('')
   const send = (x: string) => {
     if (!x.trim()) return
-    setMessages((m) => [...m, { text: x, mine: true }, { text: coachReply(x, locale), mine: false }])
+    setMessages((m) => [...m, { text: x, mine: true }, { text: coachReply(x, locale, tips), mine: false }])
     setInput('')
   }
   return (

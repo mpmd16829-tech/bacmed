@@ -11,6 +11,7 @@ export type SyncData = {
   attempts: Record<string, string>
   streak: number
   lastStudy: string
+  studentCode?: string
 }
 
 export type RestoredData = Omit<SyncData, 'locale'> & { attempts: Record<string, 'success' | 'review'> }
@@ -78,6 +79,7 @@ export function useProgressSync(
           attempts: safeAttempts,
           streak: typeof json.streak === 'number' ? json.streak : 0,
           lastStudy: typeof json.lastStudy === 'string' ? json.lastStudy : '',
+          studentCode: typeof json.studentCode === 'string' ? json.studentCode : '',
         }
         // Never resurrect a half-written state: only apply a profile that finished onboarding.
         if (restoredData.profile?.onboarded) onRestore(restoredData)

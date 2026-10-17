@@ -1,7 +1,7 @@
 // PrepaBAC offline shell. API calls and hashed build assets are never served from cache:
 // /api/* always goes to the network (student progress must not be shared between devices),
 // and navigation requests are network-first so a deploy is visible on the next open.
-const CACHE = 'prepabac-v3'
+const CACHE = 'prepabac-v4'
 const SHELL = ['/', '/manifest.webmanifest', '/icon.svg', '/apple-icon.png']
 
 self.addEventListener('install', (e) => {
@@ -29,8 +29,12 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(
       fetch(request)
         .then((response) => {
-          const copy = response.clone()
-          caches.open(CACHE).then((c) => c.put('/', copy))
+          // Seule la page de l'élève sert de coquille hors ligne : /admin et /prof ne doivent jamais
+          // remplacer l'app dans le cache, sinon le hors-ligne afficherait une console.
+          if (url.pathname === '/') {
+            const copy = response.clone()
+            caches.open(CACHE).then((c) => c.put('/', copy))
+          }
           return response
         })
         .catch(() => caches.match('/')),

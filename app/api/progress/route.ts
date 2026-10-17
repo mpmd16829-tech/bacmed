@@ -50,14 +50,17 @@ const timeOrNull = (v: unknown): string | null => {
 
 export async function GET(request: Request) {
   try {
-    const deviceId = new URL(request.url).searchParams.get('deviceId')
-    if (!deviceId || deviceId.length > 100) {
+    const params = new URL(request.url).searchParams
+    const deviceId = params.get('deviceId')
+    const code = (params.get('code') ?? '').trim().toUpperCase()
+    if ((!deviceId || deviceId.length > 100) && !code) {
       return NextResponse.json({ error: 'deviceId required' }, { status: 400 })
     }
     const result = await getPool().query(
-      `SELECT profile, completed_chapters, completed_exercises, completed_sessions, attempts, streak, last_study, updated_at
-       FROM ${TABLE} WHERE device_id = $1`,
-      [deviceId],
+      `SELECT profile, completed_chapters, completed_exercises, completed_sessions, attempts, streak, last_study, student_code, updated_at
+       FROM ${TABLE} WHERE device_id = $1 OR student_code = $2
+       ORDER BY updated_at DESC LIMIT 1`,
+      [deviceId ?? '__none__', code || '__none__'],
     )
     if (result.rows.length === 0) return NextResponse.json({ found: false })
     const row = result.rows[0]
@@ -70,6 +73,7 @@ export async function GET(request: Request) {
       attempts: row.attempts,
       streak: row.streak,
       lastStudy: row.last_study,
+      studentCode: row.student_code,
       updatedAt: row.updated_at,
     })
   } catch (error) {
@@ -91,11 +95,13 @@ export async function PUT(request: Request) {
     const streak =
       typeof b.streak === 'number' && Number.isFinite(b.streak) ? Math.max(0, Math.min(9999, Math.trunc(b.streak))) : 0
     const savedAt = timeOrNull(b.savedAt) ?? new Date().toISOString()
+    // The student code arrives once the learner has claimed one; it is what survives a new phone.
+    const studentCode = typeof b.studentCode === 'string' && /^BAC-[A-Z2-9]{6}$/i.test(b.studentCode.trim()) ? b.studentCode.trim().toUpperCase() : null
 
     await getPool().query(
       `INSERT INTO ${TABLE}
-         (device_id, profile, completed_chapters, completed_exercises, completed_sessions, attempts, streak, last_study, updated_at)
-       VALUES ($1, $2::jsonb, $3, $4, $5, $6::jsonb, $7, $8, $9)
+         (device_id, profile, completed_chapters, completed_exercises, completed_sessions, attempts, streak, last_study, student_code, updated_at)
+       VALUES ($1, $2::jsonb, $3, $4, $5, $6::jsonb, $7, $8, $9, $10)
        ON CONFLICT (device_id) DO UPDATE SET
          profile = EXCLUDED.profile,
          completed_chapters = EXCLUDED.completed_chapters,
@@ -104,6 +110,7 @@ export async function PUT(request: Request) {
          attempts = EXCLUDED.attempts,
          streak = EXCLUDED.streak,
          last_study = EXCLUDED.last_study,
+         student_code = COALESCE(EXCLUDED.student_code, ${TABLE}.student_code),
          updated_at = GREATEST(${TABLE}.updated_at, EXCLUDED.updated_at)`,
       [
         deviceId,
@@ -114,10 +121,17 @@ export async function PUT(request: Request) {
         JSON.stringify(attempts(b.attempts)),
         streak,
         dateOrNull(b.lastStudy),
+        studentCode,
         savedAt,
       ],
     )
-    return NextResponse.json({ ok: true, savedAt })
+    if (studentCode) {
+      // Le code fait foi pour la liste de classe : le roster garde une copie du profil et de la dernière visite.
+      await getPool()
+        .query('UPDATE students SET profile = $2::jsonb, last_seen_at = now() WHERE code = $1', [studentCode, profileOf(b.profile)])
+        .catch(() => undefined)
+    }
+    return NextResponse.json({ ok: true, savedAt, studentCode })
   } catch (error) {
     console.error('PUT /api/progress failed', error)
     return NextResponse.json({ error: 'server error' }, { status: 500 })
