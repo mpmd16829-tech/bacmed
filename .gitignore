@@ -26,3 +26,6 @@ node_modules
 .next/
 .DS_Store
 *.log
+
+# Artefact de typecheck (jamais versionné)
+tsconfig.tsbuildinfo
