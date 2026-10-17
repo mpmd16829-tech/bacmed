@@ -184,7 +184,21 @@ export function BacPrepApp() {
     )
   }
 
-  if (!data.profile.onboarded) return <Onboarding data={data} setData={setData} lang={lang} online={online} />
+  // La console doit être atteignable même avant l'onboarding : un administrateur qui ouvre l'app
+  // sur un téléphone neuf doit pouvoir importer ses cours avant de créer un profil élève.
+  const consoleOverlay = consoleOpen && (
+    <div className="fixed inset-0 z-50 overflow-auto bg-background">
+      <AdminConsole onClose={() => setConsoleOpen(false)} initialLocale={data.locale} />
+    </div>
+  )
+
+  if (!data.profile.onboarded)
+    return (
+      <>
+        <Onboarding data={data} setData={setData} lang={lang} online={online} onUnlock={() => setConsoleOpen(true)} />
+        {consoleOverlay}
+      </>
+    )
 
   const studied = (patch: Partial<AppData>) => {
     const day = today()
@@ -295,11 +309,7 @@ export function BacPrepApp() {
         })}
       </nav>
 
-      {consoleOpen && (
-        <div className="fixed inset-0 z-50 overflow-auto bg-background">
-          <AdminConsole onClose={() => setConsoleOpen(false)} initialLocale={data.locale} />
-        </div>
-      )}
+      {consoleOverlay}
     </div>
   )
 }
@@ -379,7 +389,7 @@ function Nav({ label, icon: I, active, click }: { label: string; icon: typeof Ho
   )
 }
 
-function Onboarding({ data, setData, lang, online }: { data: AppData; setData: React.Dispatch<React.SetStateAction<AppData>>; lang: React.ReactNode; online: boolean }) {
+function Onboarding({ data, setData, lang, online, onUnlock }: { data: AppData; setData: React.Dispatch<React.SetStateAction<AppData>>; lang: React.ReactNode; online: boolean; onUnlock?: () => void }) {
   const l = data.locale || 'fr'
   const t = ui[l]
   const [step, setStep] = useState(0)
@@ -391,7 +401,7 @@ function Onboarding({ data, setData, lang, online }: { data: AppData; setData: R
     <main className="min-h-screen px-4 py-6">
       <div className="mx-auto max-w-5xl">
         <div className="flex justify-between">
-          <Brand />
+          <Brand onUnlock={onUnlock} />
           {lang}
         </div>
         <div className="mt-12 grid gap-10 lg:grid-cols-2">
